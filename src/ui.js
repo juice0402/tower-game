@@ -119,9 +119,18 @@ export class UI {
       if (['1', '2', '3'].includes(e.key)) { this.speed = Number(e.key); this.update(0, true); }
     });
     cv.addEventListener('pointerdown', e => {
-      cv.setPointerCapture(e.pointerId);
+      try { cv.setPointerCapture(e.pointerId); } catch (err) { /* ためし用のイベントなど */ }
       this.pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
-      if (this.pointers.size === 1) this.drag = { x: e.clientX, y: e.clientY, cx: this.r.cam.x, cy: this.r.cam.y, moved: false, t: performance.now(), type: e.pointerType, button: e.button };
+      if (this.pointers.size === 1) {
+        this.drag = { x: e.clientX, y: e.clientY, cx: this.r.cam.x, cy: this.r.cam.y, moved: false, t: performance.now(), type: e.pointerType, button: e.button };
+        // 点線の枠の上から指を動かしたら、枠を動かす（枠の外なら画面が動く）
+        const gh = this.r.ghost;
+        if (gh && this.pending && e.pointerType !== 'mouse' && FAC[this.tool] && this.tool !== 'elevator' && gh.type === this.tool) {
+          const pk = this.r.pick(e.clientX, e.clientY);
+          const w = FAC[gh.type].w, top = -(gh.level + 1) * 24;
+          if (pk.tx >= gh.x - 1 && pk.tx <= gh.x + w && pk.wy >= top - 6 && pk.wy <= top + 30) this.drag.ghost = { dx: pk.tx - gh.x };
+        }
+      }
       else if (this.pointers.size === 2) { const [a, b] = [...this.pointers.values()]; this.pinch = { d: Math.hypot(a.x - b.x, a.y - b.y), z: this.r.cam.z }; if (this.drag) this.drag.moved = true; }
     });
     cv.addEventListener('pointermove', e => {
@@ -130,6 +139,17 @@ export class UI {
         const [a, b] = [...this.pointers.values()];
         const d = Math.hypot(a.x - b.x, a.y - b.y);
         this.zoomAt((a.x + b.x) / 2, (a.y + b.y) / 2, this.pinch.z * d / this.pinch.d, true);
+        return;
+      }
+      if (this.drag && this.pointers.size === 1 && this.drag.ghost) {
+        const dx = e.clientX - this.drag.x, dy = e.clientY - this.drag.y;
+        if (Math.abs(dx) + Math.abs(dy) > 6) this.drag.moved = true;
+        if (!this.drag.moved) return;
+        const pk = this.r.pick(e.clientX, e.clientY);
+        const w = FAC[this.tool].w;
+        const x = Math.max(0, Math.min(64 - w, pk.tx - this.drag.ghost.dx));
+        const gh = this.r.ghost;
+        if (!gh || x !== gh.x || pk.level !== gh.level) this.offerBuild(this.setGhost(this.tool, x, pk.level));
         return;
       }
       if (this.drag && this.pointers.size === 1) {
@@ -220,9 +240,13 @@ export class UI {
     if (!mouse && pg && pg.type === t && pg.x === x && pg.level === level) { this.confirmPending(); return; }
     const gh = this.setGhost(t, x, level);
     if (mouse) { if (gh.ok) this.doBuild(gh); else this.toast(gh.reason); return; }
-    const name = FAC[t].long || FAC[t].name;
-    if (!gh.ok) this.askPending({ kind: 'none' }, `${name}（${levelName(level)}）：${gh.reason}`, null);
-    else this.askPending({ kind: 'build', gh }, `${name}（${levelName(level)}）　${yen(gh.cost)}　※もう一度タップでも建つよ`, '建てる');
+    this.offerBuild(gh);
+  }
+  // 置く前の確認（枠は指で動かせる）
+  offerBuild(gh) {
+    const name = FAC[gh.type].long || FAC[gh.type].name;
+    if (!gh.ok) this.askPending({ kind: 'none' }, `${name}（${levelName(gh.level)}）：${gh.reason}`, null);
+    else this.askPending({ kind: 'build', gh }, `${name}（${levelName(gh.level)}）　${yen(gh.cost)}　※枠を指で動かせるよ`, '建てる');
   }
   doBuild(gh) {
     const r = this.game.build(gh.type, gh.x, gh.level, gh.top);
@@ -477,7 +501,7 @@ export class UI {
       this.r.cam.x = (s.spot.x + f.w / 2) * TILE_W;
       this.r.cam.y = -(s.spot.level + 0.5) * FLOOR_H;
       this.r.clampCam();
-      if (gh.ok) this.askPending({ kind: 'build', gh }, `${f.long || f.name}（${levelName(s.spot.level)}）　${yen(gh.cost)}　※ほかの所をタップしてもいいよ`, '建てる');
+      this.offerBuild(gh);
     }
     this.showNext();
   }

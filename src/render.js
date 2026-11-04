@@ -1,6 +1,8 @@
 // 画面に描く（空・地面・ビル・人）
 import { TILE_W, FLOOR_H, WIDTH, FAC, STAIRS_TIME, MAX_LEVEL, MIN_LEVEL, levelName } from './config.js';
-import { facilitySprite, shaftSprite, carSprite, drawCar, drawPerson, drawSitter, drawSleeper, slots, SHIRT } from './sprites.js';
+import { facilitySprite, drawCar, slots } from './sprites.js';
+import { drawFigure, drawMark, blinking } from './people.js';
+import { shaftFine, drawLamps, drawCarFine } from './lift.js';
 
 const TW = WIDTH * TILE_W;
 export const topY = level => -(level + 1) * FLOOR_H;
@@ -40,6 +42,10 @@ export class Renderer {
     this.reach = new Map();
     this.reachVersion = -1;
     this.reachTime = 0;
+    this.prev = new Map();      // ひとつ前の計算での位置（なめらかに動かす）
+    this.prevCar = new WeakMap();
+    this.alpha = 1;
+    this.track = new Map();     // 歩く向き
     this.resize();
   }
   resize() {
@@ -66,6 +72,25 @@ export class Renderer {
     this.cam.y = Math.max(topY(MAX_LEVEL) - 60, Math.min(-MIN_LEVEL * FLOOR_H + 40, this.cam.y));
   }
 
+  // 計算のすぐ前に呼ぶ：前の位置をおぼえて、あいだを描く
+  snapshot(game) {
+    this.prev.clear();
+    for (const p of game.people) if (p.st === 'walk' || p.st === 'stairs') this.prev.set(p.id, { x: p.x, level: p.level, timer: p.timer, st: p.st, tid: p.tid });
+    for (const es of game.elev.values()) for (const c of es.cars) this.prevCar.set(c, c.y);
+  }
+  px(p) {
+    const q = this.prev.get(p.id);
+    if (!q || q.level !== p.level || q.st !== p.st || Math.abs(q.x - p.x) > 3) return p.x;
+    return lerp(q.x, p.x, this.alpha);
+  }
+  carY(c) {
+    const py = this.prevCar.get(c);
+    return py === undefined || Math.abs(py - c.y) > 2 ? c.y : lerp(py, c.y, this.alpha);
+  }
+  walkFace(p, real) {
+    if (blinking(p, real)) return 'blink';
+    return (p.kind === 'visitor' || p.kind === 'guest') && p.id % 3 === 0 ? 'happy' : 'normal';
+  }
   draw(game, real) {
     const ctx = this.ctx, z = this.cam.z, dpr = this.dpr;
     this.clampCam();
@@ -102,26 +127,32 @@ export class Renderer {
     this.updateReach(game, real);
 
     for (const o of game.world.objects.values()) {
-      if (o.type === 'elevator') { this.drawElevator(ctx, game, o, lBot, lTop, dark); continue; }
+      if (o.type === 'elevator') { this.drawElevator(ctx, game, o, lBot, lTop, dark, real); continue; }
       if (o.level < lBot || o.level > lTop) continue;
       if (o.x * TILE_W > view.x1 || (o.x + o.w) * TILE_W < view.x0) continue;
       this.drawFacility(ctx, game, o, inside.get(o.id) || [], dark, h, real);
     }
     // 歩いている人
-    const fr = Math.floor(real / 180);
+    if (this.track.size > game.people.length * 2 + 200) this.track.clear();
     for (const p of game.people) {
       if (p.gone) continue;
-      if (p.level < lBot || p.level > lTop + 1) continue;
+      if (p.level < lBot - 1 || p.level > lTop + 1) continue;
       if (p.st === 'walk') {
-        drawPerson(ctx, p.x * TILE_W - 1, topY(p.level) + 14, p, (fr + p.id) % 2, SHIRT[p.kind]);
+        const x = this.px(p) * TILE_W;
+        const tr = this.track.get(p.id);
+        let flip = tr ? tr.flip : false;
+        if (tr && Math.abs(x - tr.x) > 0.01) flip = x < tr.x;
+        this.track.set(p.id, { x, flip });
+        drawFigure(ctx, x, topY(p.level) + 21, p, 'walk', this.walkFace(p, real), Math.floor(Math.abs(x) / 1.5) % 6, flip);
       } else if (p.st === 'stairs') {
         const st = game.world.objects.get(p.tid);
         if (!st) continue;
-        const k = Math.max(0, Math.min(1, 1 - p.timer / STAIRS_TIME));
+        const q = this.prev.get(p.id);
+        const timer = q && q.st === 'stairs' && q.tid === p.tid ? lerp(q.timer, p.timer, this.alpha) : p.timer;
+        const k = Math.max(0, Math.min(1, 1 - timer / STAIRS_TIME));
         const up = p.tTo > p.tFrom;
         const t = up ? k : 1 - k;
-        const baseY = topY(st.level) + 14;
-        drawPerson(ctx, st.x * TILE_W + t * 14, baseY - t * FLOOR_H, p, (fr + p.id) % 2, SHIRT[p.kind]);
+        drawFigure(ctx, st.x * TILE_W + 3 + t * 11, topY(st.level) + 21 - t * FLOOR_H, p, 'walk', this.walkFace(p, real), Math.floor(k * 12) % 6, !up);
       }
     }
     this.drawWaiting(ctx, game, lBot, lTop, real);
@@ -248,10 +279,21 @@ export class Renderer {
       const sl = slots(o.type, o.w * TILE_W);
       const night = h >= 22 || h < 6.5;
       people.slice(0, sl.length).forEach((p, i) => {
-        const [sx, sy, pose] = sl[i];
-        if (pose === 2 && night) drawSleeper(ctx, x + sx, y + sy + 2, p);
-        else if (pose === 1) drawSitter(ctx, x + sx, y + sy, p, SHIRT[p.kind]);
-        else drawPerson(ctx, x + sx + ((p.id * 7) % 5) - 2, y + sy, p, 0, SHIRT[p.kind]);
+        const [sx, sy, pose, flip] = sl[i];
+        const blink = blinking(p, real);
+        if (pose === 2 && night) {
+          drawFigure(ctx, x + sx + 2.5, y + sy + 4.5, p, 'sleep', 'sleep');
+          if (i === 0 && Math.floor(real / 900) % 2 === 0) drawMark(ctx, x + sx + 7, y + sy + 1, 'zz', 0.5);
+        } else if (pose === 1) {
+          const busy = o.type === 'office' || o.type === 'food';
+          const work = busy && Math.floor(real / 260 + p.id * 0.37) % 2 === 0;
+          const face = blink ? 'blink' : o.type === 'food' || o.type === 'home' ? 'happy' : 'normal';
+          drawFigure(ctx, x + sx + 1.5, y + 21, p, work ? 'work' : 'sit', face, 0, !!flip);
+          if (o.type === 'food' && (real / 1000 + p.id * 1.7) % 9 < 1.2) drawMark(ctx, x + sx + 3, y + 8.5, 'note', 0.5);
+        } else {
+          const face = blink ? 'blink' : o.type === 'shop' || o.type === 'home' ? 'happy' : 'normal';
+          drawFigure(ctx, x + sx + 1.5 + ((p.id * 7) % 5) - 2, y + 21, p, 'stand', face, 0, p.id % 2 === 1);
+        }
       });
     }
     // あかり
@@ -282,26 +324,27 @@ export class Renderer {
     ctx.fillStyle = '#b3e5fc'; ctx.fillRect(x + 1, y + 7, 2, 14); ctx.fillRect(x + 3, y + 7, 2, 14);
   }
 
-  drawElevator(ctx, game, o, lBot, lTop, dark) {
+  drawElevator(ctx, game, o, lBot, lTop, dark, real) {
     const x = o.x * TILE_W;
-    const shaft = shaftSprite();
-    for (let l = Math.max(o.bottom, lBot); l <= Math.min(o.top, lTop); l++) ctx.drawImage(shaft, x, topY(l));
+    const shaft = shaftFine();
     const es = game.elev.get(o.id);
+    const lo = Math.max(o.bottom, lBot), hi = Math.min(o.top, lTop);
+    for (let l = lo; l <= hi; l++) ctx.drawImage(shaft, x, topY(l), 32, FLOOR_H);
     if (!es) return;
+    const ys = es.cars.map(c => this.carY(c));
+    // ワイヤー（いちばん上の階から、かごの上まで）
+    ctx.fillStyle = '#15181f';
+    ys.forEach(cy => { const top = topY(o.top), y1 = topY(cy) + 3; if (y1 > top) { ctx.fillRect(x + 11, top, 0.5, y1 - top); ctx.fillRect(x + 20.5, top, 0.5, y1 - top); } });
+    // 乗り場のランプ
+    for (let l = lo; l <= hi; l++) {
+      const q = es.queues.get(l);
+      const here = es.cars.some(c => c.dwell > 0 && Math.round(c.y) === l);
+      drawLamps(ctx, x, topY(l), q && q.up.length > 0, q && q.down.length > 0, here);
+    }
     es.cars.forEach((c, i) => {
-      if (c.y < lBot - 1 || c.y > lTop + 1) return;
-      const cy = topY(c.y) + 3;
-      const cx = x + 4;
-      const open = c.dwell > 0;
-      ctx.drawImage(carSprite(open), cx, cy);
-      if (es.cars.length > 1) { ctx.fillStyle = '#263238'; ctx.fillRect(cx + 1, cy + 1, 4, 3); ctx.fillStyle = '#ffeb3b'; ctx.fillRect(cx + 2 + (i % 2), cy + 2, 1, 1); }
-      const n = Math.min(c.pass.length, 12);
-      for (let k = 0; k < n; k++) {
-        const p = c.pass[k];
-        const px = cx + 2 + (k % 6) * 3.4, py = cy + 8 - Math.floor(k / 6) * 1;
-        drawPerson(ctx, px, py + (k >= 6 ? -2 : 0), p, 0, SHIRT[p.kind]);
-      }
-      if (!open && n) { ctx.fillStyle = 'rgba(184,191,202,0.55)'; ctx.fillRect(cx + 2, cy + 3, 20, 14); }
+      const cy = ys[i];
+      if (cy < lBot - 1 || cy > lTop + 1) return;
+      drawCarFine(ctx, x + 4, topY(cy) + 3, c, es.cars.length > 1 ? i + 1 : 0, real);
     });
   }
 
@@ -315,11 +358,14 @@ export class Renderer {
         all.forEach((p, i) => {
           const side = i % 2 === 0 ? -1 : 1;
           const k = Math.floor(i / 2);
-          const px = side < 0 ? o.x * TILE_W - 4 - k * 4 : (o.x + o.w) * TILE_W + 1 + k * 4;
+          const px = side < 0 ? o.x * TILE_W - 3 - k * 4.5 : (o.x + o.w) * TILE_W + 3 + k * 4.5;
           const w = game.t - p.waitStart;
-          const shirt = w > 12 ? '#e53935' : w > 5 ? '#ff80ab' : SHIRT[p.kind];
-          const bob = w > 12 && Math.floor(real / 150 + p.id) % 2 ? -1 : 0;
-          drawPerson(ctx, px, topY(L) + 14 + bob, p, 1, shirt);
+          const face = w > 12 ? 'angry' : w > 5 ? 'tired' : blinking(p, real) ? 'blink' : 'normal';
+          const hop = w > 12 && Math.floor(real / 160 + p.id) % 2 ? -1 : 0;
+          const tap = w > 5 && w <= 12 && Math.floor(real / 300 + p.id) % 2 ? 1 : 0;
+          drawFigure(ctx, px, topY(L) + 21 + hop, p, tap ? 'walk' : 'stand', face, tap ? 2 : 0, side > 0);
+          if (w > 12) drawMark(ctx, px + 1.5, topY(L) + 7.5 + hop, 'angry', 0.75);
+          else if (w > 5) drawMark(ctx, px + (side > 0 ? -2.5 : 2.5), topY(L) + 9, 'sweat', 0.6);
         });
       }
     }
@@ -332,7 +378,7 @@ export class Renderer {
     const x = gh.x * TILE_W;
     ctx.globalAlpha = 0.7;
     for (let l = lo; l <= hi; l++) {
-      if (gh.type === 'elevator') ctx.drawImage(shaftSprite(), x, topY(l));
+      if (gh.type === 'elevator') ctx.drawImage(shaftFine(), x, topY(l), 32, FLOOR_H);
       else if (gh.type === 'stairs') { ctx.fillStyle = '#efe6d3'; ctx.fillRect(x, topY(l), 16, FLOOR_H); ctx.drawImage(facilitySprite('stairs'), x, topY(l)); }
       else ctx.drawImage(facilitySprite(gh.type, f.hotel ? 'clean' : 'occ', 0), x, topY(l));
     }

@@ -41,8 +41,9 @@ function frame(now) {
   if (sp && game.isNight()) mins *= NIGHT_BOOST;
   acc += mins;
   let n = 0;
-  while (acc >= STEP && n < 400) { game.step(); acc -= STEP; n++; }
+  while (acc >= STEP && n < 400) { if (acc < STEP * 2) renderer.snapshot(game); game.step(); acc -= STEP; n++; }
   if (n >= 400) acc = 0;
+  renderer.alpha = Math.max(0, Math.min(1, acc / STEP));
   renderer.draw(game, now);
   ui.update(now);
   requestAnimationFrame(frame);
