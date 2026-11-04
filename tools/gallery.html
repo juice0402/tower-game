@@ -1,0 +1,48 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><style>
+body { margin: 0; background: #20263a; color: #fff; font: 12px sans-serif; }
+#g { display: flex; flex-wrap: wrap; gap: 10px; padding: 10px; width: 1240px; }
+figure { margin: 0; } figcaption { padding: 2px 0; }
+canvas { display: block; image-rendering: pixelated; background: #6fb6ea; }
+</style></head><body><div id="g"></div>
+<script type="module">
+const q = new URLSearchParams(location.search);
+const base = q.get('src') || '../src'; // 部屋の見本（リポジトリの一番上でサーバーを立てて /tools/gallery.html を開く。?only=food&z=8 で大きく）
+const Z = +(q.get('z') || 5);
+const only = q.get('only');
+const { Renderer } = await import(base + '/render.js');
+const { FAC, FLOOR_H, TILE_W } = await import(base + '/config.js');
+const real = +(q.get('real') || 1000);
+const KIND = { office: 'worker', home: 'resident', food: 'visitor', shop: 'visitor', single: 'guest', twin: 'guest', housekeeping: 'staff' };
+const cases = [
+  ['lobby', '', 0, 0, 12], ['lobby', '', 1, 0, 12], ['lobby', '', 2, 0, 12], ['stairs', '', 0, 0, 12],
+  ['office', 'occ', 0, 6, 10], ['office', 'occ', 1, 4, 10], ['office', 'occ', 2, 2, 10], ['office', 'vacant', 0, 0, 10],
+  ['home', 'occ', 0, 3, 20], ['home', 'occ', 1, 2, 20], ['home', 'occ', 2, 1, 20], ['home', 'vacant', 1, 0, 20],
+  ['food', 'occ', 0, 8, 12], ['food', 'occ', 1, 6, 12], ['food', 'occ', 2, 10, 19], ['food', 'vacant', 0, 0, 12],
+  ['shop', 'occ', 0, 4, 12], ['shop', 'occ', 1, 3, 12], ['shop', 'occ', 2, 5, 12], ['shop', 'vacant', 2, 0, 12],
+  ['single', 'clean', 0, 1, 23.5], ['single', 'clean', 1, 1, 15], ['single', 'dirty', 2, 0, 12],
+  ['twin', 'clean', 0, 2, 23.5], ['twin', 'clean', 1, 2, 15], ['twin', 'dirty', 2, 0, 12],
+  ['housekeeping', 'occ', 0, 3, 12], ['security', 'occ', 0, 0, 12], ['clinic', 'occ', 0, 0, 12], ['parking', 'occ', 0, 3, 12],
+];
+const fake = { reach: new Map(), showScore: false, door: Renderer.prototype.door };
+const game = { isOpen: () => true, world: { objAt: () => null } };
+let pid = 1;
+for (const [type, state, v, n, h] of cases) {
+  if (only && !only.split(',').includes(type)) continue;
+  const w = type === 'lobby' ? 4 : FAC[type].w;
+  const o = { id: v, type, x: 0, w, level: 0, occupied: state !== 'vacant', room: state, parked: n, score: 70 };
+  const people = [];
+  if (type !== 'parking') for (let i = 0; i < n; i++) people.push({ id: pid++ * 5 + v, kind: KIND[type] || 'visitor', look: pid + i });
+  const c = document.createElement('canvas');
+  c.width = (w * TILE_W + 8) * Z; c.height = FLOOR_H * Z;
+  const ctx = c.getContext('2d');
+  ctx.imageSmoothingEnabled = false;
+  ctx.setTransform(Z, 0, 0, Z, 4 * Z, FLOOR_H * Z);
+  const dark = h >= 20 || h < 5 ? 1 : 0;
+  Renderer.prototype.drawFacility.call(fake, ctx, game, o, people, dark, h, real);
+  const f = document.createElement('figure');
+  const cap = document.createElement('figcaption'); cap.textContent = `${type} ${state} v${v} 人${n} ${h}時`;
+  f.append(cap, c); document.getElementById('g').append(f);
+}
+document.body.dataset.done = '1';
+</script></body></html>
