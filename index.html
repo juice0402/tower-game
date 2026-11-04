@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="theme-color" content="#141a33">
+<title>のびのびタワー</title>
+<meta name="description" content="ビルを建てて育てるタワー経営シミュレーション。エレベーターをやりくりして、★3のタワーをめざそう。">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=DotGothic16&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #141a33; --panel: rgba(22, 28, 56, 0.94); --line: #3c4880; --text: #f4f6ff; --sub: #aab3d9;
+  --accent: #ffd54f; --good: #66bb6a; --bad: #ef5350; --btn: #2a3466; --btn-on: #4c5cb0;
+  --font: "DotGothic16", "Hiragino Maru Gothic ProN", "Yu Gothic", system-ui, sans-serif;
+}
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); font-family: var(--font); overflow: hidden; overscroll-behavior: none; }
+body { position: fixed; inset: 0; user-select: none; -webkit-user-select: none; }
+button { font-family: var(--font); color: var(--text); background: var(--btn); border: 2px solid var(--line); border-radius: 6px; font-size: 14px; cursor: pointer; box-shadow: inset 0 -2px 0 rgba(0,0,0,0.3); }
+button:active { transform: translateY(1px); box-shadow: none; }
+button:disabled { opacity: 0.4; cursor: default; }
+#view { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; image-rendering: pixelated; }
+
+#hud { position: absolute; top: 0; left: 0; right: 0; padding: calc(env(safe-area-inset-top) + 6px) 8px 4px; background: linear-gradient(var(--panel), rgba(22,28,56,0.82)); border-bottom: 2px solid var(--line); z-index: 5; }
+#hud .row { display: flex; align-items: center; gap: 8px; min-height: 30px; }
+#menuBtn { width: 34px; height: 30px; padding: 0; font-size: 18px; }
+#stars { color: var(--accent); font-size: 17px; letter-spacing: 1px; }
+#pop { font-size: 14px; }
+#money { margin-left: auto; font-size: 16px; color: #fff59d; }
+#money.neg { color: var(--bad); }
+#clock { font-size: 14px; color: var(--sub); }
+#speed { margin-left: auto; display: flex; gap: 4px; }
+#speed button { min-width: 38px; height: 28px; padding: 0 6px; font-size: 12px; }
+#speed button.on, .tool.on { background: var(--btn-on); border-color: var(--accent); }
+#goal { font-size: 12px; color: var(--sub); padding: 3px 2px 1px; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#goal b { color: var(--accent); font-weight: normal; }
+
+#toasts { position: absolute; top: calc(env(safe-area-inset-top) + 98px); left: 50%; transform: translateX(-50%); width: min(92vw, 520px); display: flex; flex-direction: column; gap: 4px; z-index: 6; pointer-events: none; }
+.toast { background: var(--panel); border: 2px solid var(--line); border-radius: 6px; padding: 6px 10px; font-size: 13px; transition: opacity 0.8s; text-align: center; }
+.toast.good { border-color: var(--good); }
+.toast.bad { border-color: var(--bad); }
+.toast.star { border-color: var(--accent); color: var(--accent); }
+.toast.daily { color: var(--sub); font-size: 12px; }
+.toast.fade { opacity: 0; }
+
+#zoom { position: absolute; right: 8px; bottom: calc(env(safe-area-inset-bottom) + 96px); display: flex; flex-direction: column; gap: 6px; z-index: 4; }
+#zoom button { width: 40px; height: 40px; font-size: 20px; padding: 0; background: rgba(42,52,102,0.85); }
+
+#bottom { position: absolute; left: 0; right: 0; bottom: 0; z-index: 5; display: flex; flex-direction: column; }
+#hint { margin: 0 8px 6px; align-self: flex-start; max-width: calc(100% - 64px); background: rgba(22,28,56,0.85); border: 2px solid var(--line); border-radius: 6px; padding: 5px 9px; font-size: 12px; color: var(--sub); }
+#confirm { margin: 0 8px 6px; background: var(--panel); border: 2px solid var(--accent); border-radius: 8px; padding: 8px 10px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; font-size: 14px; }
+#confirm span { flex: 1 1 180px; }
+#confirm div { display: flex; gap: 6px; margin-left: auto; }
+#confirm button { padding: 7px 14px; }
+#cfOk { background: #2e7d32; border-color: #81c784; }
+#panel { margin: 0 8px 6px; background: var(--panel); border: 2px solid var(--line); border-radius: 8px; padding: 8px 10px; font-size: 13px; max-height: 46vh; overflow-y: auto; }
+#panel .ph { display: flex; align-items: center; margin-bottom: 4px; }
+#panel .ph b { color: var(--accent); font-weight: normal; font-size: 15px; }
+#panel .x { margin-left: auto; width: 30px; height: 28px; padding: 0; }
+#panel table { width: 100%; border-collapse: collapse; }
+#panel th { text-align: left; color: var(--sub); font-weight: normal; white-space: nowrap; padding: 3px 8px 3px 0; vertical-align: top; width: 1%; }
+#panel td { padding: 3px 0; }
+#panel .pb { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+#panel .pb button { padding: 6px 10px; font-size: 13px; }
+.bar { display: inline-block; width: 70px; height: 8px; background: #39406a; border-radius: 2px; vertical-align: middle; overflow: hidden; }
+.bar i { display: block; height: 100%; }
+.bar.good i { background: #42a5f5; } .bar.mid i { background: #ffca28; } .bar.bad i { background: #e53935; }
+
+#tools { display: flex; gap: 6px; overflow-x: auto; padding: 6px 8px calc(env(safe-area-inset-bottom) + 8px); background: var(--panel); border-top: 2px solid var(--line); scrollbar-width: thin; -webkit-overflow-scrolling: touch; }
+.tool { flex: 0 0 auto; width: 70px; height: 70px; padding: 4px 2px; display: flex; flex-direction: column; align-items: center; justify-content: space-between; gap: 2px; }
+.tool .ic { height: 30px; width: 62px; display: flex; align-items: center; justify-content: center; font-size: 20px; overflow: hidden; }
+.tool .ic img { max-width: 62px; max-height: 30px; image-rendering: pixelated; }
+.tool .nm { font-size: 12px; white-space: nowrap; }
+.tool .pr { font-size: 10px; color: var(--sub); white-space: nowrap; }
+.tool.locked { opacity: 0.45; }
+
+#modal { position: absolute; inset: 0; background: rgba(5,8,20,0.6); z-index: 10; display: flex; align-items: center; justify-content: center; padding: 16px; }
+#modal[hidden], [hidden] { display: none !important; }
+#modal .box { background: var(--panel); border: 2px solid var(--line); border-radius: 10px; width: min(100%, 480px); max-height: 86vh; overflow-y: auto; padding: 14px 16px; }
+#modal h2 { margin: 0 0 10px; font-size: 18px; font-weight: normal; color: var(--accent); }
+#modal h3 { margin: 12px 0 6px; font-size: 14px; font-weight: normal; color: var(--accent); }
+#modal p, #modal li { font-size: 14px; line-height: 1.6; }
+#modal ol, #modal ul { padding-left: 20px; margin: 6px 0; }
+#modal .small { font-size: 12px; color: var(--sub); }
+#modal .mb { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+#modal .mb button { flex: 1 1 40%; padding: 10px; }
+#modal .mb button.danger { border-color: var(--bad); }
+#modal textarea { width: 100%; height: 110px; font-size: 11px; background: #0d1124; color: var(--text); border: 2px solid var(--line); border-radius: 6px; padding: 6px; user-select: text; -webkit-user-select: text; }
+#modal input[type=file] { margin-top: 8px; font-size: 12px; color: var(--sub); }
+#modal .log li { font-size: 12px; }
+#modal .hist { font-size: 12px; } #modal .hist td { padding: 1px 10px 1px 0; }
+.starup { font-size: 44px; color: var(--accent); text-align: center; letter-spacing: 6px; animation: pop 0.8s ease-out; }
+@keyframes pop { from { transform: scale(0.3); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+
+@media (min-width: 800px) {
+  #hud { right: auto; width: 520px; border-right: 2px solid var(--line); border-bottom-right-radius: 10px; }
+  #bottom { left: 50%; transform: translateX(-50%); width: min(100%, 1100px); }
+  #tools { border-radius: 10px 10px 0 0; border-left: 2px solid var(--line); border-right: 2px solid var(--line); }
+  #panel, #confirm { align-self: center; width: min(560px, 96%); }
+}
+</style>
+</head>
+<body>
+<canvas id="view"></canvas>
+<header id="hud">
+  <div class="row">
+    <button id="menuBtn" aria-label="メニュー">≡</button>
+    <span id="stars">★☆☆</span>
+    <span id="pop"></span>
+    <span id="money"></span>
+  </div>
+  <div class="row">
+    <span id="clock"></span>
+    <div id="speed">
+      <button data-s="0" aria-label="とめる">❚❚</button>
+      <button data-s="1" aria-label="ふつう">▶</button>
+      <button data-s="2" aria-label="はやい">▶▶</button>
+      <button data-s="3" aria-label="すごくはやい">▶▶▶</button>
+    </div>
+  </div>
+  <div id="goal"></div>
+</header>
+<div id="toasts"></div>
+<div id="zoom"><button id="zoomIn" aria-label="大きく">＋</button><button id="zoomOut" aria-label="小さく">−</button></div>
+<div id="bottom">
+  <div id="hint" hidden></div>
+  <div id="confirm" hidden><span id="cfText"></span><div><button id="cfOk">建てる</button><button id="cfNo">やめる</button></div></div>
+  <div id="panel" hidden></div>
+  <nav id="tools"></nav>
+</div>
+<div id="modal" hidden><div class="box"><div class="mc"></div><div class="mb"></div></div></div>
+<script type="module" src="./src/main.js"></script>
+</body>
+</html>
