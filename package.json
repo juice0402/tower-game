@@ -1,0 +1,14 @@
+{
+  "name": "nobinobi-tower",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "のびのびタワー — ビルを建てて育てるタワー経営シミュレーション",
+  "scripts": {
+    "build": "node build.mjs",
+    "test": "node --test test/*.test.js"
+  },
+  "devDependencies": {
+    "esbuild": "^0.24.0"
+  }
+}
