@@ -1,6 +1,6 @@
 // 画面に描く（空・地面・ビル・人）
 import { TILE_W, FLOOR_H, WIDTH, FAC, STAIRS_TIME, MAX_LEVEL, MIN_LEVEL, levelName } from './config.js';
-import { facilitySprite, drawCar, slots } from './sprites.js';
+import { facilitySprite, spriteW, drawCar, slots, drawDoor, drawLive, drawTuck } from './sprites.js';
 import { drawFigure, drawMark, blinking } from './people.js';
 import { shaftFine, drawLamps, drawCarFine } from './lift.js';
 
@@ -152,7 +152,10 @@ export class Renderer {
         const k = Math.max(0, Math.min(1, 1 - timer / STAIRS_TIME));
         const up = p.tTo > p.tFrom;
         const t = up ? k : 1 - k;
-        drawFigure(ctx, st.x * TILE_W + 3 + t * 11, topY(st.level) + 21 - t * FLOOR_H, p, 'walk', this.walkFace(p, real), Math.floor(k * 12) % 6, !up);
+        // だんを1つずつのぼる（だんは幅1・14だん）
+        const sx = 1 + t * 15, step = Math.min(13, Math.floor(sx - 1.5));
+        const fy = step < 0 ? 21 : Math.round((21 - (step + 1) * 24 / 14) * 2) / 2;
+        drawFigure(ctx, st.x * TILE_W + sx, topY(st.level) + fy, p, 'walk', this.walkFace(p, real), Math.floor(k * 14) % 6, !up);
       }
     }
     this.drawWaiting(ctx, game, lBot, lTop, real);
@@ -262,28 +265,35 @@ export class Renderer {
     let state = 'occ';
     if (f.tenant) state = o.occupied ? 'occ' : 'vacant';
     if (f.hotel) state = o.room === 'dirty' ? 'dirty' : 'clean';
+    ctx.drawImage(facilitySprite(o.type, state, o.id), x, y, spriteW(o.type), FLOOR_H);
     if (o.type === 'lobby') {
-      ctx.drawImage(facilitySprite('lobby', '', o.id), x, y);
       const lw = game.world.objAt(0, o.x - 1), rw = game.world.objAt(0, o.x + o.w);
-      if (!lw || lw.type !== 'lobby') this.door(ctx, x + 1, y);
-      if (!rw || rw.type !== 'lobby') this.door(ctx, x + o.w * TILE_W - 7, y);
-    } else if (o.type === 'stairs') {
-      ctx.fillStyle = '#efe6d3'; ctx.fillRect(x, y, 16, FLOOR_H);
-      ctx.drawImage(facilitySprite('stairs'), x, y);
-    } else {
-      ctx.drawImage(facilitySprite(o.type, state, o.id % 3), x, y);
+      // 外がわのはしだけに自動ドア
+      if (!lw) drawDoor(ctx, x + 1.5, y);
+      if (!rw) drawDoor(ctx, x + o.w * TILE_W - 7.5, y);
     }
     if (o.type === 'parking') for (let i = 0; i < Math.min(o.parked || 0, 4); i++) drawCar(ctx, x + 2 + i * 16, y + 14, o.id + i);
-    // 中の人
+    // あかり
+    let lit = true;
+    const open = f.tenant ? o.occupied && (f.hours ? game.isOpen(o) : true) : true;
+    if (f.tenant) lit = o.occupied && (f.hours ? game.isOpen(o) : people.length > 0);
+    else if (f.hotel) lit = people.length > 0 && !(h >= 23 || h < 6);
+    else if (o.type === 'housekeeping') lit = people.length > 0;
+    else if (o.type === 'lobby' || o.type === 'stairs' || o.type === 'parking') lit = true;
+    // 画面・湯気・いつもいる人
+    drawLive(ctx, o, x, y, { real, lit, dark, n: people.length, h, open });
+    // 中の人（夜はねる場所から、昼はねる場所をあとに）
     if (people.length) {
-      const sl = slots(o.type, o.w * TILE_W);
       const night = h >= 22 || h < 6.5;
+      const all = slots(o.type, o.w * TILE_W);
+      const sl = night ? [...all.filter(s => s[2] === 2), ...all.filter(s => s[2] !== 2)] : [...all.filter(s => s[2] !== 2), ...all.filter(s => s[2] === 2)];
       people.slice(0, sl.length).forEach((p, i) => {
         const [sx, sy, pose, flip] = sl[i];
         const blink = blinking(p, real);
         if (pose === 2 && night) {
           drawFigure(ctx, x + sx + 2.5, y + sy + 4.5, p, 'sleep', 'sleep');
-          if (i === 0 && Math.floor(real / 900) % 2 === 0) drawMark(ctx, x + sx + 7, y + sy + 1, 'zz', 0.5);
+          drawTuck(ctx, o.type, x, y, sx, o.id);
+          if (i === 0 && Math.floor(real / 900) % 2 === 0) drawMark(ctx, x + sx + 6, y + sy + 1, 'zz', 0.5);
         } else if (pose === 1) {
           const busy = o.type === 'office' || o.type === 'food';
           const work = busy && Math.floor(real / 260 + p.id * 0.37) % 2 === 0;
@@ -296,12 +306,6 @@ export class Renderer {
         }
       });
     }
-    // あかり
-    let lit = true;
-    if (f.tenant) lit = o.occupied && (f.hours ? game.isOpen(o) : people.length > 0);
-    else if (f.hotel) lit = people.length > 0 && !(h >= 23 || h < 6);
-    else if (o.type === 'housekeeping') lit = people.length > 0;
-    else if (o.type === 'lobby' || o.type === 'stairs' || o.type === 'parking') lit = true;
     const shade = lit ? 0 : (0.15 + 0.5 * dark) * (o.type === 'lobby' ? 0.5 : 1);
     if (shade > 0) { ctx.fillStyle = `rgba(10,14,40,${shade})`; ctx.fillRect(x, y, o.w * TILE_W, FLOOR_H); }
     if (lit && dark > 0.3 && o.type !== 'parking') { ctx.fillStyle = `rgba(255,220,140,${0.08 * dark})`; ctx.fillRect(x, y, o.w * TILE_W, FLOOR_H); }
@@ -319,11 +323,6 @@ export class Renderer {
       for (let i = 0; i < 7; i++) { ctx.fillRect(cx + i, cy + i, 2, 1); ctx.fillRect(cx + 6 - i, cy + i, 2, 1); }
     }
   }
-  door(ctx, x, y) {
-    ctx.fillStyle = '#607d8b'; ctx.fillRect(x, y + 6, 6, 15);
-    ctx.fillStyle = '#b3e5fc'; ctx.fillRect(x + 1, y + 7, 2, 14); ctx.fillRect(x + 3, y + 7, 2, 14);
-  }
-
   drawElevator(ctx, game, o, lBot, lTop, dark, real) {
     const x = o.x * TILE_W;
     const shaft = shaftFine();
@@ -379,8 +378,7 @@ export class Renderer {
     ctx.globalAlpha = 0.7;
     for (let l = lo; l <= hi; l++) {
       if (gh.type === 'elevator') ctx.drawImage(shaftFine(), x, topY(l), 32, FLOOR_H);
-      else if (gh.type === 'stairs') { ctx.fillStyle = '#efe6d3'; ctx.fillRect(x, topY(l), 16, FLOOR_H); ctx.drawImage(facilitySprite('stairs'), x, topY(l)); }
-      else ctx.drawImage(facilitySprite(gh.type, f.hotel ? 'clean' : 'occ', 0), x, topY(l));
+      else ctx.drawImage(facilitySprite(gh.type, f.hotel ? 'clean' : 'occ', 0), x, topY(l), spriteW(gh.type), FLOOR_H);
     }
     ctx.globalAlpha = 1;
     ctx.fillStyle = gh.ok ? 'rgba(76,175,80,0.35)' : 'rgba(229,57,53,0.45)';

@@ -11,8 +11,13 @@ const OUTFIT = {
   guest: [{ j: '#8e4fc0', J: '#6c3496', p: '#3a3446' }, { j: '#2f9aa8', J: '#1f7884', p: '#33404a' }],
   visitor: [{ j: '#ef7d2e', J: '#c25e17', p: '#4a5a7a' }, { j: '#e2546a', J: '#b83a50', p: '#3a3446' }, { j: '#3f9fb8', J: '#2c7d93', p: '#5a4a3a' }, { j: '#7cb342', J: '#5a8f2a', p: '#4a5a7a' }],
   staff: [{ j: '#4dd0e1', J: '#2aa8b8', p: '#3a4256' }],
+  // 部屋の中にいつもいる人（コックさん・店員さん・警備員さん・看護師さん）
+  chef: [{ j: '#f6f7fa', J: '#d3d9e3', t: '#d64550', p: '#3a3a46' }],
+  clerk: [{ j: '#f6f2ea', J: '#d9d2c4', a: '#3f8f5a', A: '#2d6e43', p: '#4a4a56' }, { j: '#eef3f8', J: '#ccd6e2', a: '#c4563c', A: '#9a3f2a', p: '#3a3446' }, { j: '#fdf6e8', J: '#e3d6bc', a: '#e08aa4', A: '#bf6a85', p: '#4a5a7a' }],
+  guard: [{ j: '#2c3f86', J: '#1f2d63', t: '#2a3550', p: '#222a44', g: '#26366f', G: '#18234a' }],
+  nurse: [{ j: '#f6bccb', J: '#dc98aa', p: '#f6bccb' }],
 };
-const FIXED = { E: '#2b2233', m: '#b0505a', b: '#f49b9b', w: '#f4f6fa', k: '#2a2226', q: '#f7a58f', Q: '#e0806a', r: '#e04848', d: '#7ec8f2', D: '#3e8ed0', c: '#ffffff', C: '#d8e4ea' };
+const FIXED = { E: '#2b2233', m: '#b0505a', b: '#f49b9b', w: '#f4f6fa', k: '#2a2226', q: '#f7a58f', Q: '#e0806a', r: '#e04848', d: '#7ec8f2', D: '#3e8ed0', c: '#ffffff', C: '#d8e4ea', y: '#e8c247' };
 
 // 顔（11×11）。E 目・m 口・b ほお
 const FACE = {
@@ -23,13 +28,17 @@ const FACE = {
   angry: ['.hhhqqqqhhh', '.hhqEqqqqE.', '.hqqqEqqEq.', '.hQqqEqqEq.', '..Qqqqqqqr.', '..qqqmmmqq.'],
   sleep: ['.hhhsssshhh', '.hhssssssh.', '.hssssssss.', '.hSssEEsEE.', '..Ssssssbs.', '..ssssssss.'],
 };
+const TOPS = {
+  0: ['...hhhhh...', '..hhhhhhhh.', '.hhhhhhhhhh', '.hhhhhHhhhh'],
+  2: ['...ccccc...', '..cccccccc.', '.cCCCCCCCcc', '.hhhhhhhhhh'],
+  3: ['...ccccc...', '..ccccccc..', '.ccccccccc.', '.cccccccCc.', '..ccccccc..', '..CCCCCCC..', '.hhhhhhhhhh'], // コックぼう
+  4: ['...ggggg...', '..ggggggg..', '.gggyyyggg.', '.GGGGGGGGGG', '.hhhhhhhhhh'],                         // 警備のぼうし
+};
 function head(face, style) {
-  const top = style === 2
-    ? ['...ccccc...', '..cccccccc.', '.cCCCCCCCcc', '.hhhhhhhhhh']
-    : ['...hhhhh...', '..hhhhhhhh.', '.hhhhhhhhhh', '.hhhhhHhhhh'];
+  const top = TOPS[style] || TOPS[0];
   const f = FACE[face] || FACE.normal;
   let rows = [...top, ...f, '...sssss...'];
-  if (face === 'angry') rows[10] = '...qqqqq...';
+  if (face === 'angry') rows[rows.length - 1] = '...qqqqq...';
   if (style === 1) rows = rows.map((r, i) => (i >= 5 && i <= 9 ? 'h' + r.slice(1) : r));
   return rows;
 }
@@ -40,6 +49,10 @@ const TORSO = {
   staff: ['....sss....', '..jjjjjjj..', '.jjjwwwjjj.', '.jjwwwwwjj.', '.jjwwwwwjj.', '.jjwwwwwjj.', '.sjwwwwwjs.', '..pppppppp.'],
 };
 TORSO.visitor = TORSO.guest;
+TORSO.chef = ['....sss....', '..jjtttjj..', '.jjjjtjjjj.', '.jjJjjJjjj.', '.jjjjjjjjj.', '.jjJjjJjjj.', '.sjjjjjjjs.', '..pppppppp.'];
+TORSO.clerk = ['....sss....', '..jjjjjjj..', '.jjaaaaajj.', '.jjaaaaajj.', '.jjaAaAajj.', '.jjaaaaajj.', '.sjaaaaajs.', '..aaaaaaa..'];
+TORSO.guard = ['....sss....', '..jjwtwjj..', '.jjjwtwjjj.', '.jyjjtjjjj.', '.jjJjjjJjj.', '.jjJjjjJjj.', '.sjJjjjJjs.', '..pppppppp.'];
+TORSO.nurse = TORSO.staff;
 const STAND = ['..ppp.ppp..', '..pp...pp..', '..pp...pp..', '.kkk...kkk.', '...........'];
 // 歩き6コマ
 const LEGS = [
@@ -53,13 +66,14 @@ const LEGS = [
 // 腕のふり（手の行）
 const HANDS = { 1: '.jjJjjjJjss', 4: 'ssjJjjjJjj.' };
 
+const STYLE = { staff: 2, nurse: 2, chef: 3, guard: 4 };
 function look(p) {
   const h = Math.imul(p.id + 1, 2654435761) >>> 0;
   const outfits = OUTFIT[p.kind] || OUTFIT.visitor;
   return {
     skin: (h >>> 3) % 7 === 0 ? 2 : (h >>> 3) % 3 === 0 ? 1 : 0,
     hair: p.look % HAIR.length,
-    style: p.kind === 'staff' ? 2 : (h >>> 7) % 3 === 0 ? 1 : 0,
+    style: STYLE[p.kind] ?? ((h >>> 7) % 3 === 0 ? 1 : 0),
     outfit: (h >>> 11) % outfits.length,
     bag: p.kind === 'worker' && (h >>> 13) % 2 === 0,
     suitcase: p.kind === 'guest',
@@ -67,7 +81,7 @@ function look(p) {
 }
 function palette(p, L, tint) {
   const o = (OUTFIT[p.kind] || OUTFIT.visitor)[L.outfit];
-  const pal = { ...FIXED, s: SKIN[L.skin][0], S: SKIN[L.skin][1], h: HAIR[L.hair][0], H: HAIR[L.hair][1], j: tint || o.j, J: tint ? shade(tint) : o.J, t: o.t || o.j, p: o.p };
+  const pal = { ...FIXED, s: SKIN[L.skin][0], S: SKIN[L.skin][1], h: HAIR[L.hair][0], H: HAIR[L.hair][1], j: tint || o.j, J: tint ? shade(tint) : o.J, t: o.t || o.j, p: o.p, g: o.g, G: o.G, a: o.a, A: o.A };
   return pal;
 }
 function shade(hex) {
@@ -90,10 +104,10 @@ function bake(rows, pal, flip) {
 function rowsFor(p, L, pose, face, frame) {
   const torso = (TORSO[p.kind] || TORSO.visitor).slice();
   if (pose === 'walk' && HANDS[frame]) torso[6] = HANDS[frame];
+  // すわる：ひざから下を長めにして、いすの高さ（足もとから2）にこしかける
   if (pose === 'sit' || pose === 'work') {
-    const t = torso.slice(0, 7);
-    if (pose === 'work') t[6] = '.sjJjjjJsss';
-    return [...head(face, L.style), ...t, '.pppppppp..', '.ppppppppp.', '.......pp..', '.......kkk.'];
+    const t = [torso[0], torso[1], torso[2], torso[3], torso[5], pose === 'work' ? '.sjJjjjJsss' : torso[6]];
+    return [...head(face, L.style), ...t, '.pppppppp..', '.ppppppppp.', '.......pp..', '.......pp..', '.......pp..', '.......kkk.'];
   }
   const legs = pose === 'walk' ? LEGS[frame % 6] : STAND;
   return [...head(face, L.style), ...torso, ...legs];
