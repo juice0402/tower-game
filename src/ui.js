@@ -482,13 +482,13 @@ export class UI {
         (navigator.clipboard ? navigator.clipboard.writeText(code) : Promise.reject()).then(() => this.toast('コピーしたよ'), () => { document.execCommand && document.execCommand('copy'); this.toast('コピーしたよ'); });
         return false;
       }],
-      ['ファイルで保存', () => {
+      ...(window.__NOBI_ARTIFACT ? [] : [['ファイルで保存', () => {
         const a = document.createElement('a');
         a.href = URL.createObjectURL(new Blob([code], { type: 'text/plain' }));
         a.download = `nobinobi-tower-${this.game.week}w${this.game.weekday + 1}d.txt`;
         a.click();
         return false;
-      }],
+      }]]),
       ['とじる', null],
     ]);
   }
