@@ -6,12 +6,17 @@ import { UI, loadLocal, saveLocal } from './ui.js';
 
 const canvas = document.getElementById('view');
 const renderer = new Renderer(canvas);
-let game = loadLocal() || new Game();
+let game = loadLocal() || Game.starter();
 
 function homeCamera() {
   renderer.resize();
   renderer.cam.z = Math.max(1, Math.min(2, renderer.vw / 260));
-  renderer.cam.x = Math.min((renderer.vw / 2 - 34) / renderer.cam.z, WIDTH * TILE_W / 2);
+  // 建っているものの真ん中を見る（何もなければ左寄り）
+  const objs = [...game.world.objects.values()];
+  if (objs.length) {
+    const lo = Math.min(...objs.map(o => o.x)), hi = Math.max(...objs.map(o => o.x + o.w));
+    renderer.cam.x = (lo + hi) / 2 * TILE_W;
+  } else renderer.cam.x = Math.min((renderer.vw / 2 - 34) / renderer.cam.z, WIDTH * TILE_W / 2);
   renderer.cam.y = -(renderer.vh * 0.2) / renderer.cam.z;
 }
 homeCamera();

@@ -126,3 +126,15 @@ test('セーブして読みこむ', () => {
   h.advance(1440);
   assert.ok(h.t > g.t);
 });
+
+test('はじめの小さなビル', () => {
+  const g = Game.starter(7);
+  assert.equal(g.population(), 21);
+  assert.equal(g.money, 3000000);
+  assert.ok(g.checkBuild('office', 22, 4).ok, '5F に建てられる');
+  assert.ok(g.build('office', 22, 4).ok);
+  const o = [...g.world.objects.values()].find(x => x.type === 'office' && x.level === 4);
+  assert.ok(g.reachable(o), '5F までエレベーターがとどく');
+  g.advance(60 * 24 * 2);
+  assert.ok(g.population() > 21, '空き部屋に入居がある');
+});

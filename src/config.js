@@ -20,6 +20,18 @@ export const SPEEDS = [0, 2, 6, 15]; // 1秒で進むゲームの分（一時停
 export const NIGHT_BOOST = 4;      // 夜中（0:00〜5:30）は早送り
 
 export const START_MONEY = 3000000;
+
+// はじめから建っている小さなビル。rooms は [種類, x, 階, 入居ずみか]、elevator は [x, 下の階, 上の階]
+// 5F はエレベーターだけ止まる空き階（最初に建てる場所）
+export const STARTER = {
+  elevator: [30, 0, 4],
+  rooms: [
+    ['lobby', 22, 0], ['lobby', 26, 0], ['lobby', 34, 0], ['lobby', 38, 0],
+    ['office', 22, 1, true], ['office', 34, 1, true],
+    ['office', 22, 2, true], ['office', 34, 2, false],
+    ['home', 22, 3, true], ['home', 34, 3, false],
+  ],
+};
 export const UNDERGROUND_MULT = 1.5; // 地下に建てると高い
 
 // ★ごとの建てられる高さ

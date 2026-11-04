@@ -1,6 +1,6 @@
 // のびのびタワー — ゲームの中身（時間・人・お金・★）
 import {
-  FAC, STEP, WALK_SPEED, STAIRS_TIME, GIVE_UP, ELEV_SPEED, ELEV_CAPACITY, START_MONEY, STAR_GOALS, ELEV_MAX_CARS, WIDTH, levelName, yen,
+  FAC, STEP, WALK_SPEED, STAIRS_TIME, GIVE_UP, ELEV_SPEED, ELEV_CAPACITY, START_MONEY, STAR_GOALS, ELEV_MAX_CARS, WIDTH, STARTER, levelName, yen,
 } from './config.js';
 import { Rng } from './rng.js';
 import { World, levelsOf } from './world.js';
@@ -40,6 +40,19 @@ export class Game {
       const load = es ? es.waitingCount() : 0;
       return waitEstimate(t) + (load / (e.cars * ELEV_CAPACITY)) * ((e.top - e.bottom) / ELEV_SPEED);
     };
+  }
+  // 新しく始めるときのゲーム：小さなビルが建っていて、何部屋かは入居ずみ
+  static starter(seed) {
+    const g = new Game(seed);
+    const [ex, lo, hi] = STARTER.elevator;
+    g.afterPlace(g.world.place('elevator', ex, lo, { top: hi }));
+    for (const [type, x, level, occupied] of STARTER.rooms) {
+      const o = g.world.place(type, x, level);
+      g.afterPlace(o);
+      if (occupied) g.moveIn(o, true);
+    }
+    g._pop = null;
+    return g;
   }
   route(from, to) {
     return this.routes.get(this.world, from, to, Math.floor(this.t / 10), this.waitFn);
@@ -102,7 +115,7 @@ export class Game {
       star: this.star + 1,
       pop: g.pop,
       popOk: pop >= g.pop,
-      need: g.need.map(([type, n, label]) => ({ label, have: this.count(type), n, ok: this.count(type) >= n })),
+      need: g.need.map(([type, n, label]) => ({ type, label, have: this.count(type), n, ok: this.count(type) >= n })),
     };
   }
   checkStar() {
@@ -623,17 +636,18 @@ export class Game {
       this.moveIn(f);
     }
   }
-  moveIn(f) {
+  // quiet：はじめから入居ずみにするとき（お知らせ・入居金なし）
+  moveIn(f, quiet = false) {
     const ff = FAC[f.type];
     Object.assign(f, { occupied: true, score: 70, strikes: 0, lowDays: 0, customers: 0, lastCustomers: [], issue: null });
-    this.today.moveIns++;
-    if (ff.moveInFee) { this.money += ff.moveInFee; this.today.income += ff.moveInFee; this.today.fees += ff.moveInFee; }
+    if (!quiet) this.today.moveIns++;
+    if (ff.moveInFee && !quiet) { this.money += ff.moveInFee; this.today.income += ff.moveInFee; this.today.fees += ff.moveInFee; }
     if (f.type === 'office') {
       for (let i = 0; i < ff.pop; i++) { const p = this.addPerson('worker', f.id); this.makePlan(p, this.day, true); this.placeByPlan(p); }
     } else if (f.type === 'home') {
       for (let i = 0; i < ff.pop; i++) { const p = this.addPerson('resident', f.id); this.makePlan(p, this.day, true); this.placeByPlan(p); }
     }
-    this.notify(`${levelName(f.level)}の${ff.name}に入居がありました`, 'good');
+    if (!quiet) this.notify(`${levelName(f.level)}の${ff.name}に入居がありました`, 'good');
     this._pop = null;
   }
   moveOut(f, why) {

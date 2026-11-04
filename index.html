@@ -37,6 +37,9 @@ button:disabled { opacity: 0.4; cursor: default; }
 #speed button.on, .tool.on { background: var(--btn-on); border-color: var(--accent); }
 #goal { font-size: 12px; color: var(--sub); padding: 3px 2px 1px; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 #goal b { color: var(--accent); font-weight: normal; }
+#next { font-size: 13px; color: var(--text); padding: 4px 2px 0; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#next b { color: var(--accent); font-weight: bold; }
+.tool.suggest, #panel button.suggest { border: 2px dashed var(--accent); }
 
 #toasts { position: absolute; top: calc(env(safe-area-inset-top) + 98px); left: 50%; transform: translateX(-50%); width: min(92vw, 520px); display: flex; flex-direction: column; gap: 4px; z-index: 6; pointer-events: none; }
 .toast { background: var(--panel); border: 2px solid var(--line); border-radius: 6px; padding: 6px 10px; font-size: 13px; transition: opacity 0.8s; text-align: center; }
@@ -121,6 +124,7 @@ button:disabled { opacity: 0.4; cursor: default; }
       <button data-s="3" aria-label="すごくはやい">▶▶▶</button>
     </div>
   </div>
+  <div id="next" hidden></div>
   <div id="goal"></div>
 </header>
 <div id="toasts"></div>

@@ -1,5 +1,5 @@
 // ボタン・パネル・タップの操作
-import { FAC, TOOL_ORDER, SPEEDS, STAR_LIMITS, DAY_NAMES, ELEV_MAX_CARS, levelName, yen } from './config.js';
+import { FAC, TOOL_ORDER, SPEEDS, STAR_LIMITS, DAY_NAMES, ELEV_MAX_CARS, TILE_W, FLOOR_H, levelName, yen } from './config.js';
 import { iconCanvas } from './sprites.js';
 import { clockText, issueText, Game } from './sim.js';
 
@@ -47,7 +47,6 @@ export class UI {
     this.buildTools();
     this.bind();
     this.update(0, true);
-    try { if (!localStorage.getItem(HELP_KEY)) this.showHelp(); } catch (e) { this.showHelp(); }
   }
   setGame(g) {
     this.game = g;
@@ -112,6 +111,7 @@ export class UI {
     $('#cfNo').addEventListener('click', () => this.cancelPending());
     $('#panel').addEventListener('click', e => { const b = e.target.closest('[data-act]'); if (b) this.panelAction(b.dataset.act); });
     $('#goal').addEventListener('click', () => this.showGoal());
+    $('#next').addEventListener('click', () => this.doNext());
     document.addEventListener('keydown', e => {
       if (e.target.tagName === 'TEXTAREA' || e.target.tagName === 'INPUT') return;
       if (e.key === ' ') { this.speed = this.speed ? 0 : 1; this.update(0, true); e.preventDefault(); }
@@ -251,7 +251,7 @@ export class UI {
       const r = this.game.remove(p.id);
       if (!r.ok) this.toast(r.reason); else this.sfx('erase');
       this.r.selected = null;
-    } else if (p.kind === 'reset') this.onNewGame(new Game());
+    } else if (p.kind === 'reset') this.onNewGame(Game.starter());
   }
   cancelPending() {
     this.pending = null;
@@ -338,7 +338,7 @@ export class UI {
     btns.push(['erase', 'こわす', canErase.ok]);
     $('#panel').innerHTML = `<div class="ph"><b>${esc(title)}</b><button data-act="close" class="x">×</button></div>`
       + `<table>${rows.map(([k, v]) => `<tr>${k ? `<th>${esc(k)}</th><td>${v.startsWith && v.startsWith('<') ? v : esc(v)}</td>` : `<td colspan="2">${esc(v)}</td>`}</tr>`).join('')}</table>`
-      + `<div class="pb">${btns.map(([a, l, ok]) => `<button data-act="${a}" ${ok ? '' : 'disabled'}>${esc(l)}</button>`).join('')}</div>`;
+      + `<div class="pb">${btns.map(([a, l, ok]) => `<button data-act="${a}" ${ok ? '' : 'disabled'}${this.next && this.next.open === this.panelId && this.next.act === a ? ' class="suggest"' : ''}>${esc(l)}</button>`).join('')}</div>`;
   }
   panelAction(a) {
     const g = this.game, id = this.panelId;
@@ -373,6 +373,7 @@ export class UI {
     $('#clock').textContent = `${g.week}週目 ${DAY_NAMES[g.weekday]} ${clockText(g)}${g.isNight() && this.speed ? ' 🌙' : ''}`;
     for (const b of document.querySelectorAll('#speed button')) b.classList.toggle('on', Number(b.dataset.s) === this.speed);
     $('#goal').innerHTML = this.goalLine();
+    if (force || !this.lastNext || now - this.lastNext > 1000) { this.lastNext = now; this.showNext(); }
     // できごと
     while (g.events.length) {
       const ev = g.events.shift();
@@ -386,13 +387,102 @@ export class UI {
     if (this.panelId && now - this.lastPanelUpdate > 500) { this.lastPanelUpdate = now; this.renderPanel(); }
     if (now - this.lastSave > 30000) { saveLocal(g); this.lastSave = now; }
   }
+  // ---------- つぎにやること（上の 👉 の行。押すとその操作へ） ----------
+  showNext() {
+    const s = this.nextStep();
+    this.next = s;
+    const el = $('#next');
+    el.innerHTML = s ? `👉 ${s.text}` : '';
+    el.hidden = !s;
+    for (const b of document.querySelectorAll('.tool')) b.classList.toggle('suggest', !!s && b.dataset.tool === s.tool && this.tool !== s.tool);
+  }
+  nextStep() {
+    const g = this.game, w = g.world;
+    if (!w.ofType('lobby').length) return { text: '1Fに<b>ロビー</b>を建てよう（人の入り口）', tool: 'lobby' };
+    const tr = w.transports();
+    if (!tr.list.size) return { text: '<b>エレベーター</b>で1Fと上の階をつなごう', tool: 'elevator' };
+    // 待ちくたびれている人がいるエレベーター
+    let busy = null;
+    for (const [id, es] of g.elev) {
+      const o = w.objects.get(id);
+      if (!o || o.cars >= ELEV_MAX_CARS) continue;
+      let maxW = 0;
+      for (const q of es.queues.values()) for (const p of [...q.up, ...q.down]) maxW = Math.max(maxW, g.t - p.waitStart);
+      if (maxW >= 12 && (!busy || maxW > busy.maxW)) busy = { id, maxW };
+    }
+    if (busy) return { text: 'エレベーターが混んでる！ <b>かご＋</b>で台数をふやそう', open: busy.id, act: 'addCar' };
+    // とどいていない部屋（✕）
+    const lb = w.ofType('lobby')[0];
+    const lost = [...w.objects.values()].find(o => FAC[o.type].tenant && !o.occupied && !g.route({ level: 0, x: lb.x + lb.w / 2 }, { level: o.level, x: o.x + o.w / 2 }));
+    if (lost) {
+      const e = [...tr.list.values()].find(t => t.kind === 'elev');
+      const act = e && lost.level < e.obj.bottom ? 'extDown' : 'extUp';
+      return { text: `${levelName(lost.level)}の${FAC[lost.type].name}に、エレベーターを<b>${act === 'extUp' ? '上へ' : '下へ'}のばそう</b>`, open: e && e.id, act };
+    }
+    // ★の条件の施設（人数が半分をこえたら）
+    const goal = g.goal();
+    if (goal && g.population() >= goal.pop / 2) {
+      const miss = goal.need.find(n => !n.ok);
+      const tool = miss && (miss.type === 'rooms' ? 'single' : miss.type);
+      if (tool && FAC[tool].star <= g.star) {
+        const spot = this.findSpot(tool);
+        if (spot) return { text: `★${goal.star}には<b>${miss.label}</b>がいるよ。${levelName(spot.level)}に建てよう`, tool, spot };
+      }
+    }
+    // 空いている階に、オフィスか住まい
+    const spot = this.findSpot('office');
+    if (spot) {
+      const tool = w.ofType('office').length > w.ofType('home').length * 2 ? 'home' : 'office';
+      if (g.money < spot.cost) return { text: 'お金がたまるのを待とう。家賃は毎日のしめに入るよ', tool: null };
+      return { text: `${levelName(spot.level)}があいてるよ。<b>${FAC[tool].name}</b>を建てよう`, tool, spot: this.findSpot(tool) || spot };
+    }
+    // 空きがない：エレベーターを上へ
+    const lim = STAR_LIMITS[g.star];
+    const e = [...tr.list.values()].filter(t => t.kind === 'elev').sort((a, b) => b.obj.top - a.obj.top)[0];
+    if (e && e.obj.top < lim.top) return { text: `${levelName(e.obj.top + 1)}に建てるには、エレベーターを<b>上へのばす</b>`, open: e.id, act: 'extUp' };
+    return null;
+  }
+  // エレベーター・階段のとどく階で、床がつながる置き場所をさがす（いちばん下の階・乗りものの近くから）
+  findSpot(type) {
+    const g = this.game, w = g.world, f = FAC[type];
+    const tr = w.transports();
+    const levels = [...tr.byLevel.keys()].sort((a, b) => a - b);
+    for (const level of levels) {
+      const ts = tr.byLevel.get(level);
+      const segs = new Set(ts.map(t => w.segAt(level, Math.floor(t.x))).filter(Boolean));
+      const cx = ts[0].x;
+      const xs = [];
+      for (let x = 0; x + f.w <= 64; x++) xs.push(x);
+      xs.sort((a, b) => Math.abs(a + f.w / 2 - cx) - Math.abs(b + f.w / 2 - cx));
+      for (const x of xs) {
+        const touch = segs.has(w.segAt(level, x - 1)) || segs.has(w.segAt(level, x + f.w));
+        if (!touch) continue;
+        const r = w.check(type, x, level, g.star);
+        if (r.ok) return { x, level, cost: r.cost };
+      }
+    }
+    return null;
+  }
+  doNext() {
+    const s = this.next;
+    if (!s) return;
+    if (s.open) { this.setTool('look'); this.openPanel(s.open); this.showNext(); return; }
+    if (!s.tool) return;
+    this.setTool(s.tool);
+    const b = document.querySelector(`.tool[data-tool="${s.tool}"]`);
+    if (b) b.scrollIntoView({ inline: 'center', block: 'nearest', behavior: 'smooth' });
+    if (s.spot) {
+      const f = FAC[s.tool];
+      const gh = this.setGhost(s.tool, s.spot.x, s.spot.level);
+      this.r.cam.x = (s.spot.x + f.w / 2) * TILE_W;
+      this.r.cam.y = -(s.spot.level + 0.5) * FLOOR_H;
+      this.r.clampCam();
+      if (gh.ok) this.askPending({ kind: 'build', gh }, `${f.long || f.name}（${levelName(s.spot.level)}）　${yen(gh.cost)}　※ほかの所をタップしてもいいよ`, '建てる');
+    }
+    this.showNext();
+  }
   goalLine() {
     const g = this.game;
-    const w = g.world;
-    if (!w.ofType('lobby').length) return '👉 まずは1Fに<b>ロビー</b>を建てよう（人の入り口）';
-    if (!w.ofType('elevator').length && !w.ofType('stairs').length) return '👉 <b>エレベーター</b>で1Fと上の階をつなごう';
-    const tenants = [...w.objects.values()].filter(o => FAC[o.type].tenant);
-    if (!tenants.length) return '👉 エレベーターがとどく2Fに<b>オフィス</b>か<b>住まい</b>を建てよう';
     const goal = g.goal();
     if (!goal) return '★3達成！ 50Fをめざして、のびのび育てよう';
     const parts = [`人数 ${Math.min(g.population(), goal.pop)}/${goal.pop}${goal.popOk ? '✓' : ''}`];
@@ -447,8 +537,8 @@ export class UI {
   showHelp() {
     this.modal(`<h2>のびのびタワーの遊び方</h2>
       <ol>
-        <li>1Fに<b>ロビー</b>を建てる。外から来る人の入り口だよ</li>
-        <li><b>エレベーター</b>（または階段）で上の階とつなぐ</li>
+        <li>上の 👉 の行が「つぎにやること」。押すと、そのボタンと置く場所が出るよ</li>
+        <li>1Fの<b>ロビー</b>が入り口。<b>エレベーター</b>（または階段）でつながった階にだけ人が来る</li>
         <li><b>オフィス</b>や<b>住まい</b>を建てると、入居者がやってくる。つながっていない部屋には ✕ が出て、だれも来ない</li>
         <li>エレベーターが混むと、待ちくたびれて<b>赤く</b>なる。満足度が下がりつづけると出ていっちゃう。かごを足したり、本数をふやそう</li>
         <li>人数と施設の条件で<b>★</b>が上がり、建てられる物と高さがふえる（★3まで）</li>
