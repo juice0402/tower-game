@@ -42,6 +42,7 @@ export class UI {
     this.elevStart = null;   // エレベーターの1つめの端
     this.pointers = new Map();
     this.drag = null;
+    this.carry = null;       // 下のボタンから引っぱっている部屋
     this.lastPanelUpdate = 0;
     this.lastSave = performance.now();
     this.buildTools();
@@ -64,7 +65,7 @@ export class UI {
       const b = document.createElement('button');
       b.className = 'tool'; b.dataset.tool = id;
       const ic = document.createElement('span'); ic.className = 'ic';
-      if (icon) { const img = document.createElement('img'); img.src = icon; img.alt = ''; ic.appendChild(img); }
+      if (icon) { const img = document.createElement('img'); img.src = icon; img.alt = ''; img.draggable = false; ic.appendChild(img); }
       else ic.textContent = id === 'look' ? '👆' : '🔨';
       b.appendChild(ic);
       const n = document.createElement('span'); n.className = 'nm'; n.textContent = label; b.appendChild(n);
@@ -97,14 +98,18 @@ export class UI {
     if (t === 'elevator') this.hint('エレベーター：下の端の階をタップして、つぎに上の端の階をタップ');
     else if (t === 'stairs') this.hint('階段：タップした階と、そのすぐ上の階をつなぐよ');
     else if (t === 'erase') this.hint('こわすものをタップ（お金はもどらないよ）');
-    else if (FAC[t]) this.hint(`${FAC[t].long || FAC[t].name}：置きたい所をタップ`);
+    else if (FAC[t]) this.hint(`${FAC[t].long || FAC[t].name}：置きたい所をタップ（ボタンから引っぱっても置けるよ）`);
     else this.hint('');
   }
 
   // ---------- 入力 ----------
   bind() {
     const cv = this.r.canvas;
-    $('#tools').addEventListener('click', e => { const b = e.target.closest('.tool'); if (b) this.setTool(b.dataset.tool); });
+    $('#tools').addEventListener('click', e => {
+      if (this.noClick) { this.noClick = false; return; }
+      const b = e.target.closest('.tool'); if (b) this.setTool(b.dataset.tool);
+    });
+    this.bindCarry();
     $('#speed').addEventListener('click', e => { const b = e.target.closest('button'); if (b) { this.speed = Number(b.dataset.s); this.update(0, true); } });
     $('#menuBtn').addEventListener('click', () => this.showMenu());
     $('#cfOk').addEventListener('click', () => this.confirmPending());
@@ -175,6 +180,131 @@ export class UI {
     $('#zoomIn').addEventListener('click', () => this.zoomAt(this.r.vw / 2, this.r.vh / 2, this.r.cam.z * 1.4));
     $('#zoomOut').addEventListener('click', () => this.zoomAt(this.r.vw / 2, this.r.vh / 2, this.r.cam.z / 1.4));
   }
+  // ---------- 下のボタンから引っぱって置く ----------
+  bindCarry() {
+    const tools = $('#tools');
+    tools.addEventListener('pointerdown', e => {
+      const b = e.target.closest('.tool');
+      if (!b || !FAC[b.dataset.tool] || (e.pointerType === 'mouse' && e.button !== 0)) return;
+      this.carry = { type: b.dataset.tool, btn: b, id: e.pointerId, x0: e.clientX, y0: e.clientY, x: e.clientX, y: e.clientY, on: false, entered: false, touch: e.pointerType !== 'mouse' };
+    });
+    tools.addEventListener('pointermove', e => {
+      const c = this.carry;
+      if (!c || c.id !== e.pointerId) return;
+      c.x = e.clientX; c.y = e.clientY;
+      if (!c.on) {
+        const dx = c.x - c.x0, dy = c.y - c.y0;
+        if (dy > -12 || Math.abs(dy) < Math.abs(dx) * 1.2) return;
+        if (!this.startCarry(c)) { this.carry = null; return; }
+      }
+      e.preventDefault();
+      this.moveCarry();
+    });
+    const end = e => {
+      const c = this.carry;
+      if (!c || c.id !== e.pointerId) return;
+      this.carry = null;
+      if (c.on) this.dropCarry(c, e.type === 'pointerup');
+    };
+    tools.addEventListener('pointerup', end);
+    tools.addEventListener('pointercancel', end);
+  }
+  startCarry(c) {
+    const f = FAC[c.type];
+    if (f.star > this.game.star) { this.toast(`${f.name}は★${f.star}になると建てられるよ`); return false; }
+    try { c.btn.setPointerCapture(c.id); } catch (err) { /* なし */ }
+    c.on = true;
+    if (this.pending) this.cancelPending();
+    this.closePanel();
+    this.elevStart = null;
+    this.tool = c.type; this.markTool();
+    const img = c.btn.querySelector('img');
+    const fl = document.createElement('div');
+    fl.id = 'carry';
+    if (img) fl.appendChild(img.cloneNode());
+    document.body.appendChild(fl);
+    c.fl = fl;
+    this.hint(c.type === 'elevator' ? 'はなした階がエレベーターの端になるよ（ボタンにもどすとやめる）' : 'はなすと建つよ（ボタンにもどすとやめる）');
+    return true;
+  }
+  carryZone(c) {
+    const toolsTop = $('#tools').getBoundingClientRect().top;
+    if (c.y < toolsTop - 70) c.entered = true;
+    return { inTools: c.y >= toolsTop - 4, toolsTop, hudBottom: $('#hud').getBoundingClientRect().bottom };
+  }
+  carryAim(c) {
+    // 指でかくれないよう、指の少し上に置く
+    return { sx: c.x, sy: c.touch ? c.y - 44 : c.y };
+  }
+  moveCarry() {
+    const c = this.carry;
+    if (!c || !c.on) return;
+    const z = this.carryZone(c);
+    const over = !z.inTools && (c.entered || c.y < z.toolsTop - 30);
+    c.fl.style.transform = `translate(${c.x - 31}px, ${c.y - 46}px)`;
+    c.fl.hidden = over;
+    if (!over) { this.r.ghost = null; return; }
+    const { sx, sy } = this.carryAim(c);
+    const { tx, level } = this.r.pick(sx, sy);
+    const f = FAC[c.type];
+    const x = Math.max(0, Math.min(64 - f.w, tx - Math.floor(f.w / 2)));
+    if (c.type === 'elevator') this.setGhost('elevator', x, level, level + 1);
+    else this.setGhost(c.type, x, level);
+  }
+  // 画面のはしに持っていくと、画面が動く（毎フレーム）
+  carryScroll() {
+    const c = this.carry;
+    if (!c || !c.on) return;
+    const z = this.carryZone(c);
+    if (z.inTools) return;
+    const edge = 46, cam = this.r.cam;
+    let vx = 0, vy = 0;
+    if (c.y < z.hudBottom + edge) vy = -(z.hudBottom + edge - c.y) / edge;
+    else if (c.entered && c.y > z.toolsTop - edge) vy = (c.y - (z.toolsTop - edge)) / edge;
+    if (c.x < edge) vx = -(edge - c.x) / edge;
+    else if (c.x > this.r.vw - edge) vx = (c.x - (this.r.vw - edge)) / edge;
+    if (!vx && !vy) return;
+    cam.x += vx * 7 / cam.z; cam.y += vy * 7 / cam.z;
+    this.r.clampCam();
+    this.moveCarry();
+  }
+  dropCarry(c, up) {
+    c.fl.remove();
+    this.noClick = true; setTimeout(() => { this.noClick = false; }, 400);
+    const gh = this.r.ghost;
+    const z = this.carryZone(c);
+    if (!up || z.inTools || !gh || gh.type !== c.type) { this.r.ghost = null; this.setTool('look'); return; }
+    if (c.type === 'elevator') {
+      this.tool = 'elevator'; this.markTool();
+      this.elevStart = { x: gh.x, level: gh.level, quick: true };
+      this.setGhost('elevator', gh.x, gh.level, gh.level);
+      this.hint(`エレベーター：${levelName(gh.level)}から。もう一方の端の階をタップ`);
+      return;
+    }
+    if (!gh.ok) { this.toast(`${FAC[gh.type].long || FAC[gh.type].name}：${gh.reason}`); this.r.ghost = null; this.setTool('look'); return; }
+    this.quickBuild(gh);
+  }
+  // すぐ建てて、5秒だけもどせる
+  quickBuild(gh) {
+    const r = this.game.build(gh.type, gh.x, gh.level, gh.top);
+    this.r.ghost = null;
+    this.setTool('look');
+    if (!r.ok) { this.toast(r.reason); return; }
+    this.sfx('build');
+    this.update(0, true);
+    const name = gh.type === 'elevator' ? `エレベーター ${levelName(Math.min(gh.level, gh.top))}〜${levelName(Math.max(gh.level, gh.top))}` : `${FAC[gh.type].long || FAC[gh.type].name}（${levelName(gh.level)}）`;
+    this.askPending({ kind: 'undo', id: r.obj.id, cost: r.cost, until: performance.now() + 5000 }, `${name}を建てたよ　${yen(r.cost)}`, 'もどす');
+    $('#cfNo').textContent = 'OK';
+  }
+  undoBuild(p) {
+    const g = this.game;
+    if (!g.world.objects.has(p.id)) return;
+    const r = g.remove(p.id);
+    if (!r.ok) { this.toast(`もどせない：${r.reason}`); return; }
+    g.money += p.cost; g.today.expense -= p.cost;
+    this.toast('もどしたよ（お金も返ってきたよ）');
+    this.update(0, true);
+  }
   zoomAt(sx, sy, z) {
     const before = this.r.screenToWorld(sx, sy);
     this.r.cam.z = Math.max(0.5, Math.min(6, z));
@@ -230,6 +360,7 @@ export class UI {
       const gh = this.setGhost('elevator', this.elevStart.x, this.elevStart.level, level);
       const lo = Math.min(level, this.elevStart.level), hi = Math.max(level, this.elevStart.level);
       const label = `エレベーター ${levelName(lo)}〜${levelName(hi)}`;
+      if (this.elevStart.quick && gh.ok) { this.elevStart = null; this.quickBuild(gh); return; }
       if (mouse && gh.ok) { this.doBuild(gh); return; }
       if (!gh.ok) { this.toast(`${label}：${gh.reason}`); this.elevStart = null; this.r.ghost = null; this.hint('もう一度、下の端の階からタップしてね'); return; }
       this.askPending({ kind: 'build', gh }, `${label}　${yen(gh.cost)}`, '建てる');
@@ -271,6 +402,7 @@ export class UI {
     $('#confirm').hidden = true;
     this.pending = null;
     if (p.kind === 'build') this.doBuild(p.gh);
+    else if (p.kind === 'undo') this.undoBuild(p);
     else if (p.kind === 'erase') {
       const r = this.game.remove(p.id);
       if (!r.ok) this.toast(r.reason); else this.sfx('erase');
@@ -387,6 +519,8 @@ export class UI {
   // ---------- 上の表示 ----------
   update(now, force) {
     const g = this.game;
+    this.carryScroll();
+    if (this.pending && this.pending.kind === 'undo' && performance.now() > this.pending.until) this.cancelPending();
     if (!force && now - this.lastHud < 200) return;
     this.lastHud = now;
     $('#stars').textContent = '★'.repeat(g.star) + '☆'.repeat(3 - g.star);
@@ -567,7 +701,7 @@ export class UI {
         <li>エレベーターが混むと、待ちくたびれて<b>赤く</b>なる。満足度が下がりつづけると出ていっちゃう。かごを足したり、本数をふやそう</li>
         <li>人数と施設の条件で<b>★</b>が上がり、建てられる物と高さがふえる（★3まで）</li>
       </ol>
-      <p class="small">操作：ドラッグで動かす／ピンチ・ホイールで大きく小さく／下のボタンで建てる。「みる」で部屋をタップすると、くわしく見られるよ。<br>平日の朝・お昼・夕方はエレベーターがいちばん混む時間！</p>`,
+      <p class="small">操作：ドラッグで動かす／ピンチ・ホイールで大きく小さく／下のボタンから引っぱって建てる（はなすとすぐ建って、5秒だけもどせる）。「みる」で部屋をタップすると、くわしく見られるよ。<br>平日の朝・お昼・夕方はエレベーターがいちばん混む時間！</p>`,
       [['はじめる', () => { try { localStorage.setItem(HELP_KEY, '1'); } catch (e) {} }]]);
   }
   showStar(star) {
